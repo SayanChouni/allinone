@@ -1,51 +1,77 @@
 // File: api/webhook.js
 const { Telegraf, Markup } = require('telegraf');
 const axios = require('axios');
+const mongoose = require('mongoose'); // Mongoose যোগ করা হলো
 
-// Vercel Environment Variables থেকে টোকেন নিন
+// --- ENVIRONMENT VARIABLES ---
 const BOT_TOKEN = process.env.BOT_TOKEN; 
-const VERCEL_URL = process.env.VERCEL_URL; // VERCEL_URL টি অবশ্যই সেট করবেন (যেমন: my-bot.vercel.app)
+const VERCEL_URL = process.env.VERCEL_URL; 
+const MONGO_URI = process.env.MONGO_URI; 
+
+// --- STATIC CONFIG ---
+const ADMIN_ID = 5327773504; // আপনার দেওয়া অ্যাডমিন আইডি (নম্বর হিসেবে)
+const SOCIAL_DOWNLOADER_API = 'https://downloaderpro.xo.je/mesin/dwn.php/?url=';
+const TERABOX_API = 'https://wadownloader.amitdas.site/api/TeraBox/main/?url=';
+
 
 if (!BOT_TOKEN) {
-    throw new Error('BOT_TOKEN is not set in Environment Variables.');
+    throw new Error('BOT_TOKEN is not set.');
+}
+if (!MONGO_URI) {
+    console.warn('WARNING: MONGO_URI is not set. Bot state management will fail.');
 }
 
 const bot = new Telegraf(BOT_TOKEN);
 
-// --- API Endpoint গুলি ---
-const SOCIAL_DOWNLOADER_API = 'https://downloaderpro.xo.je/mesin/dwn.php/?url=';
-const TERABOX_API = 'https://wadownloader.amitdas.site/api/TeraBox/main/?url=';
+// --- MONGODB SCHEMA ---
+const userStateSchema = new mongoose.Schema({
+    chatId: { type: Number, required: true, unique: true },
+    state: { type: String, default: null },
+    lastUpdated: { type: Date, default: Date.now }
+});
 
-// Vercel Serverless এ Map/Object ব্যবহার করা ঝুঁকিপূর্ণ কারণ এটি প্রতিবার রিকোয়েস্টে রিসেট হতে পারে।
-// তবে আপাতত এই প্রাথমিক ধাপে, আমরা এটি ইনলাইন-কিউ-এর (inline query) বিকল্প হিসেবে ব্যবহার করছি।
-// দ্বিতীয় অংশে আমরা MongoDB ব্যবহার করে এই সমস্যার সমাধান করব।
-const userSelections = {}; 
+const UserState = mongoose.models.UserState || mongoose.model('UserState', userStateSchema);
+
+// --- MONGODB CONNECTION & STATE HANDLERS ---
+async function connectDb() {
+    if (mongoose.connections[0].readyState) return;
+    try {
+        await mongoose.connect(MONGO_URI);
+        console.log('MongoDB connected successfully.');
+    } catch (error) {
+        console.error('MongoDB connection error:', error.message);
+    }
+}
 
 /**
- * ইউজার স্টেট সেট/রিসেট করার ফাংশন 
+ * ইউজার স্টেট সেট করার ফাংশন (DB-তে সেভ করবে)
  * @param {number} chatId 
  * @param {string} state 
  */
-function setUserState(chatId, state) {
-    userSelections[chatId] = state;
+async function setUserState(chatId, state) {
+    if (!MONGO_URI) return;
+    await UserState.findOneAndUpdate(
+        { chatId },
+        { state, lastUpdated: Date.now() },
+        { upsert: true, new: true }
+    );
 }
 
 /**
- * ইউজার স্টেট তুলে নেওয়ার ফাংশন
+ * ইউজার স্টেট তুলে নেওয়ার ফাংশন (DB থেকে fetch করে রিসেট করবে)
  * @param {number} chatId
- * @returns {string | undefined}
+ * @returns {string | null}
  */
-function getUserState(chatId) {
-    const state = userSelections[chatId];
-    delete userSelections[chatId]; // স্টেট একবার ব্যবহার হলেই ডিলিট করে দেওয়া হচ্ছে
-    return state;
+async function getUserState(chatId) {
+    if (!MONGO_URI) return null;
+    const doc = await UserState.findOneAndDelete({ chatId });
+    return doc ? doc.state : null;
 }
 
-
 // --- ১. /start কমান্ড: ওয়েলকাম মেসেজ ও বাটন ---
-bot.start((ctx) => {
-    // স্টেট রিসেট
-    setUserState(ctx.chat.id, null);
+bot.start(async (ctx) => {
+    // DB-তে স্টেট রিসেট
+    await setUserState(ctx.chat.id, null);
 
     const welcomeMessage = `
 **👋 স্বাগতম! আমি আপনার অল-ইন-ওয়ান ভিডিও ডাউনলোডার এবং প্লেয়ার বট!**
@@ -55,6 +81,7 @@ bot.start((ctx) => {
     const mainKeyboard = Markup.inlineKeyboard([
         [Markup.button.callback('🌐 সোশ্যাল ডাউনলোডার', 'SOCIAL_DOWNLOADER')],
         [Markup.button.callback('📦 Terabox প্লেয়ার ও ডাউনলোডার', 'TERABOX_PLAYER')],
+        // [Markup.button.callback('⚙️ সেটিংস', 'SETTINGS')] // (পরবর্তী অংশের জন্য)
     ]);
 
     ctx.replyWithMarkdown(welcomeMessage, mainKeyboard);
@@ -78,21 +105,21 @@ bot.action('SOCIAL_DOWNLOADER', (ctx) => {
 });
 
 // --- ৩. Terabox প্লেয়ার বাটন হ্যান্ডলিং ---
-bot.action('TERABOX_PLAYER', (ctx) => {
-    setUserState(ctx.chat.id, 'TERABOX_LINK_EXPECTED');
+bot.action('TERABOX_PLAYER', async (ctx) => {
+    await setUserState(ctx.chat.id, 'TERABOX_LINK_EXPECTED');
     ctx.editMessageText('অনুগ্রহ করে **Terabox লিঙ্কটি** দিন যা আপনি ডাউনলোড বা দেখতে চান।');
 });
 
 // --- ৪. সোশ্যাল প্ল্যাটফর্ম নির্বাচন হ্যান্ডলিং ---
-bot.action(/SOCIAL_(INSTAGRAM|FACEBOOK|YOUTUBE|OTHER)/, (ctx) => {
+bot.action(/SOCIAL_(INSTAGRAM|FACEBOOK|YOUTUBE|OTHER)/, async (ctx) => {
     const platform = ctx.match[1];
-    setUserState(ctx.chat.id, `SOCIAL_LINK_EXPECTED_${platform}`);
+    await setUserState(ctx.chat.id, `SOCIAL_LINK_EXPECTED_${platform}`);
     ctx.editMessageText(`আপনি **${platform}** নির্বাচন করেছেন। অনুগ্রহ করে **ভিডিও লিঙ্কটি** দিন।`);
 });
 
 // --- ৫. মূল মেনুতে ফিরে যাওয়া ---
-bot.action('BACK_TO_MAIN', (ctx) => {
-    setUserState(ctx.chat.id, null); // স্টেট রিসেট
+bot.action('BACK_TO_MAIN', async (ctx) => {
+    await setUserState(ctx.chat.id, null); // স্টেট রিসেট
     const welcomeMessage = `
 **👋 স্বাগতম! আমি আপনার অল-ইন-ওয়ান ভিডিও ডাউনলোডার এবং প্লেয়ার বট!**
 আপনি কোন পরিষেবা থেকে ভিডিও ডাউনলোড বা দেখতে চান তা নির্বাচন করুন।
@@ -111,14 +138,20 @@ bot.action('BACK_TO_MAIN', (ctx) => {
 bot.on('text', async (ctx) => {
     const url = ctx.message.text.trim();
     const chatId = ctx.chat.id;
-    const currentSelection = getUserState(chatId); // স্টেট নিয়ে ডিলিট করে দেওয়া হলো
+
+    // DB থেকে স্টেট আনুন এবং ডিলিট করুন
+    const currentSelection = await getUserState(chatId); 
+
+    if (!currentSelection) {
+        return ctx.reply('দয়া করে প্রথমে **/start** কমান্ড দিয়ে শুরু করুন এবং একটি ডাউনলোড অপশন নির্বাচন করুন।');
+    }
 
     // লিঙ্ক ভ্যালিডেশন
     if (!url.startsWith('http')) {
         return ctx.reply('এটি কোনো বৈধ লিঙ্ক বলে মনে হচ্ছে না। দয়া করে একটি সঠিক URL দিন।');
     }
 
-    if (currentSelection && currentSelection.startsWith('TERABOX_LINK_EXPECTED')) {
+    if (currentSelection.startsWith('TERABOX_LINK_EXPECTED')) {
         // ৬.১. Terabox লিঙ্ক প্রসেসিং
         try {
             await ctx.reply('🔗 Terabox লিঙ্কটি প্রক্রিয়া করা হচ্ছে...');
@@ -153,7 +186,7 @@ bot.on('text', async (ctx) => {
             ctx.reply('😞 API কল করার সময় একটি ত্রুটি হয়েছে।');
         }
 
-    } else if (currentSelection && currentSelection.startsWith('SOCIAL_LINK_EXPECTED')) {
+    } else if (currentSelection.startsWith('SOCIAL_LINK_EXPECTED')) {
         // ৬.২. সোশ্যাল মিডিয়া লিঙ্ক প্রসেসিং
         try {
             await ctx.reply('🔗 ভিডিও লিঙ্কটি প্রক্রিয়া করা হচ্ছে...');
@@ -201,17 +234,20 @@ bot.on('text', async (ctx) => {
         }
 
     } else {
-        // কোনো স্টেট সেট না থাকলে
+        // এই ব্লকটি আসলে আর ট্রিগার হওয়া উচিত নয় যদি স্টেট সঠিকভাবে কাজ করে
         ctx.reply('দয়া করে প্রথমে **/start** কমান্ড দিয়ে শুরু করুন এবং একটি ডাউনলোড অপশন নির্বাচন করুন।');
     }
 });
 
 
 // --- Vercel Serverless Function Export ---
-// এই অংশটি Vercel-এর জন্য আবশ্যক
 module.exports = async (req, res) => {
-    // Vercel এ ওয়েবহুক সেট করার জন্য শুধুমাত্র একবার রান করার লজিক
-    // যদি VERCEL_URL সেট করা থাকে এবং আপনি 'set_webhook' নামে একটি HTTP রিকোয়েস্ট পাঠান
+    // DB কানেকশন
+    if (MONGO_URI) {
+        await connectDb();
+    }
+    
+    // ওয়েবহুক সেট করার লজিক (একবার রান করার জন্য)
     if (req.query.set_webhook === 'true' && VERCEL_URL) {
         try {
             const webhookUrl = `https://${VERCEL_URL}/api/webhook`;
@@ -228,7 +264,6 @@ module.exports = async (req, res) => {
     if (req.method === 'POST' && req.body) {
         try {
             await bot.handleUpdate(req.body, res); 
-            // Telegraf নিজেই 200 রেসপন্স পাঠাতে পারে, তাই এখানে আবার sending 'OK' একটি অতিরিক্ত সুরক্ষা
             return res.status(200).send('OK'); 
         } catch (err) {
             console.error('Error handling update:', err);

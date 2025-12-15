@@ -16,6 +16,6 @@
   "dependencies": {
     "axios": "^1.6.8",
     "telegraf": "^4.16.1",
-    "mongoose": "^8.0.0"  <-- এই লাইনটি যোগ করুন
+    "mongoose": "^8.0.0" 
   }
 }

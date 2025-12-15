@@ -4,7 +4,7 @@ const axios = require('axios');
 const mongoose = require('mongoose');
 
 // --- ENVIRONMENT VARIABLES ---
-// VERCEL_URL ভেরিয়েবল Vercel-এ ডিফল্টভাবে থাকে, যা ডোমেইন দেয়।
+// VERCEL_URL ভেরিয়েবল Vercel-এ ডিফল্টভাবে থাকে, যা ডোমেইন দেয়
 const BOT_TOKEN = process.env.BOT_TOKEN; 
 const MONGO_URI = process.env.MONGO_URI; 
 const VERCEL_DOMAIN = process.env.VERCEL_URL || process.env.URL; // ডোমেইন নিশ্চিত করা হলো

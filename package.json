@@ -2,9 +2,9 @@
   "name": "all-in-one-video-downloader-bot",
   "version": "1.0.0",
   "description": "Telegram Video Downloader Bot deployed on Vercel.",
-  "main": "api/webhook.js",
+  "main": "api/index.js",       
   "scripts": {
-    "start": "node api/webhook.js"
+    "start": "node api/index.js" 
   },
   "keywords": [
     "telegram",

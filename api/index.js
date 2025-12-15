@@ -1,29 +1,28 @@
-// File: api/webhook.js
+// File: api/index.js
 const { Telegraf, Markup } = require('telegraf');
 const axios = require('axios');
-const mongoose = require('mongoose'); // Mongoose যোগ করা হলো
+const mongoose = require('mongoose');
 
 // --- ENVIRONMENT VARIABLES ---
+// VERCEL_URL ভেরিয়েবল Vercel-এ ডিফল্টভাবে থাকে, যা ডোমেইন দেয়।
 const BOT_TOKEN = process.env.BOT_TOKEN; 
-const VERCEL_URL = process.env.VERCEL_URL; 
 const MONGO_URI = process.env.MONGO_URI; 
+const VERCEL_DOMAIN = process.env.VERCEL_URL || process.env.URL; // ডোমেইন নিশ্চিত করা হলো
 
 // --- STATIC CONFIG ---
-const ADMIN_ID = 5327773504; // আপনার দেওয়া অ্যাডমিন আইডি (নম্বর হিসেবে)
+const ADMIN_ID = 5327773504; // আপনার দেওয়া অ্যাডমিন আইডি
 const SOCIAL_DOWNLOADER_API = 'https://downloaderpro.xo.je/mesin/dwn.php/?url=';
 const TERABOX_API = 'https://wadownloader.amitdas.site/api/TeraBox/main/?url=';
 
-
 if (!BOT_TOKEN) {
-    throw new Error('BOT_TOKEN is not set.');
-}
-if (!MONGO_URI) {
-    console.warn('WARNING: MONGO_URI is not set. Bot state management will fail.');
+    // Vercel build/runtime এ টোকেন না পেলে ফাংশন লোড হতে বাধা দেবে
+    throw new Error('BOT_TOKEN is not set in Environment Variables.');
 }
 
 const bot = new Telegraf(BOT_TOKEN);
 
 // --- MONGODB SCHEMA ---
+// User State সংরক্ষণের জন্য
 const userStateSchema = new mongoose.Schema({
     chatId: { type: Number, required: true, unique: true },
     state: { type: String, default: null },
@@ -34,43 +33,47 @@ const UserState = mongoose.models.UserState || mongoose.model('UserState', userS
 
 // --- MONGODB CONNECTION & STATE HANDLERS ---
 async function connectDb() {
-    if (mongoose.connections[0].readyState) return;
+    // যদি MONGO_URI সেট না থাকে, DB ফাংশনগুলি কাজ করবে না
+    if (!MONGO_URI) return; 
+    
+    // যদি কানেকশন ইতিমধ্যেই থাকে, তবে নতুন করে কানেক্ট করার দরকার নেই (Serverless Optimization)
+    if (mongoose.connections[0].readyState) return; 
+    
     try {
         await mongoose.connect(MONGO_URI);
         console.log('MongoDB connected successfully.');
     } catch (error) {
         console.error('MongoDB connection error:', error.message);
+        // কানেকশন ব্যর্থ হলে, আমরা ফাংশনটিকে চলতে দেব, তবে স্টেট সেভ হবে না।
     }
 }
 
-/**
- * ইউজার স্টেট সেট করার ফাংশন (DB-তে সেভ করবে)
- * @param {number} chatId 
- * @param {string} state 
- */
 async function setUserState(chatId, state) {
     if (!MONGO_URI) return;
-    await UserState.findOneAndUpdate(
-        { chatId },
-        { state, lastUpdated: Date.now() },
-        { upsert: true, new: true }
-    );
+    try {
+        await UserState.findOneAndUpdate(
+            { chatId },
+            { state, lastUpdated: Date.now() },
+            { upsert: true, new: true }
+        );
+    } catch (e) {
+        console.error("Failed to set state:", e.message);
+    }
 }
 
-/**
- * ইউজার স্টেট তুলে নেওয়ার ফাংশন (DB থেকে fetch করে রিসেট করবে)
- * @param {number} chatId
- * @returns {string | null}
- */
 async function getUserState(chatId) {
     if (!MONGO_URI) return null;
-    const doc = await UserState.findOneAndDelete({ chatId });
-    return doc ? doc.state : null;
+    try {
+        const doc = await UserState.findOneAndDelete({ chatId }); // স্টেট তুলে ডিলিট করে দেওয়া হলো
+        return doc ? doc.state : null;
+    } catch (e) {
+        console.error("Failed to get/delete state:", e.message);
+        return null;
+    }
 }
 
 // --- ১. /start কমান্ড: ওয়েলকাম মেসেজ ও বাটন ---
 bot.start(async (ctx) => {
-    // DB-তে স্টেট রিসেট
     await setUserState(ctx.chat.id, null);
 
     const welcomeMessage = `
@@ -81,7 +84,6 @@ bot.start(async (ctx) => {
     const mainKeyboard = Markup.inlineKeyboard([
         [Markup.button.callback('🌐 সোশ্যাল ডাউনলোডার', 'SOCIAL_DOWNLOADER')],
         [Markup.button.callback('📦 Terabox প্লেয়ার ও ডাউনলোডার', 'TERABOX_PLAYER')],
-        // [Markup.button.callback('⚙️ সেটিংস', 'SETTINGS')] // (পরবর্তী অংশের জন্য)
     ]);
 
     ctx.replyWithMarkdown(welcomeMessage, mainKeyboard);
@@ -117,9 +119,9 @@ bot.action(/SOCIAL_(INSTAGRAM|FACEBOOK|YOUTUBE|OTHER)/, async (ctx) => {
     ctx.editMessageText(`আপনি **${platform}** নির্বাচন করেছেন। অনুগ্রহ করে **ভিডিও লিঙ্কটি** দিন।`);
 });
 
-// --- ৫. মূল মেনুতে ফিরে যাওয়া ---
+// --- ৫. মূল মেনুতে ফিরে যাওয়া ---
 bot.action('BACK_TO_MAIN', async (ctx) => {
-    await setUserState(ctx.chat.id, null); // স্টেট রিসেট
+    await setUserState(ctx.chat.id, null);
     const welcomeMessage = `
 **👋 স্বাগতম! আমি আপনার অল-ইন-ওয়ান ভিডিও ডাউনলোডার এবং প্লেয়ার বট!**
 আপনি কোন পরিষেবা থেকে ভিডিও ডাউনলোড বা দেখতে চান তা নির্বাচন করুন।
@@ -127,7 +129,7 @@ bot.action('BACK_TO_MAIN', async (ctx) => {
     ctx.editMessageText(welcomeMessage, {
         parse_mode: 'Markdown',
         reply_markup: Markup.inlineKeyboard([
-            [Markup.button.callback('🌐 সোশ্যাল ডাউনলোডার', 'SOCIAL_DOWNLOADER')],
+            [Markup.button.callback('🌐 সোশ্যাল ডাউনলোDER', 'SOCIAL_DOWNLOADER')],
             [Markup.button.callback('📦 Terabox প্লেয়ার ও ডাউনলোডার', 'TERABOX_PLAYER')],
         ]),
     });
@@ -139,14 +141,12 @@ bot.on('text', async (ctx) => {
     const url = ctx.message.text.trim();
     const chatId = ctx.chat.id;
 
-    // DB থেকে স্টেট আনুন এবং ডিলিট করুন
     const currentSelection = await getUserState(chatId); 
 
     if (!currentSelection) {
         return ctx.reply('দয়া করে প্রথমে **/start** কমান্ড দিয়ে শুরু করুন এবং একটি ডাউনলোড অপশন নির্বাচন করুন।');
     }
 
-    // লিঙ্ক ভ্যালিডেশন
     if (!url.startsWith('http')) {
         return ctx.reply('এটি কোনো বৈধ লিঙ্ক বলে মনে হচ্ছে না। দয়া করে একটি সঠিক URL দিন।');
     }
@@ -234,7 +234,6 @@ bot.on('text', async (ctx) => {
         }
 
     } else {
-        // এই ব্লকটি আসলে আর ট্রিগার হওয়া উচিত নয় যদি স্টেট সঠিকভাবে কাজ করে
         ctx.reply('দয়া করে প্রথমে **/start** কমান্ড দিয়ে শুরু করুন এবং একটি ডাউনলোড অপশন নির্বাচন করুন।');
     }
 });
@@ -248,14 +247,16 @@ module.exports = async (req, res) => {
     }
     
     // ওয়েবহুক সেট করার লজিক (একবার রান করার জন্য)
-    if (req.query.set_webhook === 'true' && VERCEL_URL) {
+    if (req.query.set_webhook === 'true' && VERCEL_DOMAIN) {
         try {
-            const webhookUrl = `https://${VERCEL_URL}/api/webhook`;
+            // ডোমেইনে HTTPS যোগ করা হলো
+            const webhookUrl = `https://${VERCEL_DOMAIN}/api/webhook`; 
             await bot.telegram.setWebhook(webhookUrl);
             console.log(`Webhook set to: ${webhookUrl}`);
             return res.status(200).send('Webhook set successfully!');
         } catch (error) {
             console.error('Error setting webhook:', error);
+            // টেলিগ্রামের কাছে এরর পাঠানো হলো না
             return res.status(500).send('Error setting webhook.');
         }
     }

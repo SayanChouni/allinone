@@ -1,15 +1,22 @@
 {
   "name": "all-in-one-video-downloader-bot",
-  // ... অন্যান্য তথ্য একই থাকবে
-  "main": "server.js",          <-- নতুন ফাইল
+  "version": "1.0.0",
+  "description": "Telegram Video Downloader Bot deployed on Vercel.",
+  "main": "server.js",          <-- Railway-এর মেইন ফাইল
   "scripts": {
-    "start": "node server.js"   <-- নতুন স্ক্রিপ্ট
+    "start": "node server.js"   <-- Railway-কে সার্ভার চালু করার নির্দেশ
   },
-  // ...
+  "keywords": [
+    "telegram",
+    "telegraf",
+    "vercel"
+  ],
+  "author": "",
+  "license": "ISC",
   "dependencies": {
     "axios": "^1.6.8",
     "telegraf": "^4.16.1",
     "mongoose": "^8.0.0",
-    "express": "^4.19.2"        <-- Express যোগ করতে হবে
+    "express": "^4.19.2"        <-- Node.js সার্ভার চালানোর জন্য আবশ্যক
   }
 }

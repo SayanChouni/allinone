@@ -1,14 +1,21 @@
 {
-  "name": "all-in-one-video-bot",
+  "name": "all-in-one-video-downloader-bot",
   "version": "1.0.0",
-  "main": "index.js",
-  "type": "module",
+  "description": "Telegram Video Downloader Bot deployed on Vercel.",
+  "main": "api/webhook.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node api/webhook.js"
   },
+  "keywords": [
+    "telegram",
+    "telegraf",
+    "vercel"
+  ],
+  "author": "",
+  "license": "ISC",
   "dependencies": {
-    "axios": "^1.6.7",
-    "mongoose": "^8.1.1",
-    "telegraf": "^4.16.2"
+    "axios": "^1.6.8",
+    "telegraf": "^4.16.1",
+    "mongoose": "^8.0.0" 
   }
 }
